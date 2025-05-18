@@ -8,6 +8,7 @@ from train_settings import layer_name, model_name, data_path, epochs, batch_size
 from utils.model_loader import load_or_initialize_model
 from utils.data_loader import load_training_data
 from torch.nn.utils.rnn import pad_sequence
+import subprocess
 
 # Tokenizer tipi kontrolü
 if tokenizer_type == "intent":
@@ -15,37 +16,48 @@ if tokenizer_type == "intent":
 else:
     from utils.tokenizer import encode_text, PAD_ID
 
+def run_github_push():
+    print("\n[✓] Eğitim tamamlandı, GitHub’a güncelleniyor...")
+    commands = [
+        'git config --global user.name "omrh2323"',
+        'git config --global user.email "omeraybas2008@gmail.com"',
+        "git init",
+        "git remote add origin https://github.com/omrh2323/newllm.git",
+        "git add .",
+        'git commit -m "Auto push after training"',
+        "git branch -M main",
+        "git push -u origin main"
+    ]
+    for cmd in commands:
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[HATA] {cmd}\n{result.stderr}")
+        else:
+            print(f"[✓] {cmd}")
+
 def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Modeli yükle veya oluştur
     model, model_path = load_or_initialize_model(layer_name, model_name)
     model.to(device)
     model.train()
 
-    # Veriyi yükle
     dataloader = load_training_data(data_path, batch_size=batch_size, num_workers=0, pin_memory=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_ID)
     scaler = GradScaler()
 
-    # Checkpoint dizini
     checkpoint_dir = os.path.join("checkpoints", model_name)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     for epoch in range(epochs):
         total_loss = 0.0
-
         for step, (questions, answers) in enumerate(dataloader):
             q_ids_batch = [encode_text(q, add_bos=True, add_eos=True) for q in questions]
             a_ids_batch = [encode_text(a, add_bos=False, add_eos=False) for a in answers]
-
-            # Boş veya hatalı örnekleri filtrele
-            filtered = [(q, a) for q, a in zip(q_ids_batch, a_ids_batch)
-                        if isinstance(q, list) and isinstance(a, list) and len(q) > 0 and len(a) > 0]
+            filtered = [(q, a) for q, a in zip(q_ids_batch, a_ids_batch) if len(q) > 0 and len(a) > 0]
             if len(filtered) == 0:
                 continue
-
             q_ids_batch, a_ids_batch = zip(*filtered)
 
             input_ids = pad_sequence([torch.tensor(q, dtype=torch.long) for q in q_ids_batch],
@@ -54,9 +66,8 @@ def train():
                                       batch_first=True, padding_value=PAD_ID).to(device)
 
             optimizer.zero_grad()
-
             with autocast():
-                output = model(input_ids)[0]  # (batch_size, seq_len, vocab_size)
+                output = model(input_ids)[0]
                 output = output.view(-1, output.size(-1))
                 target = target_ids.view(-1)
 
@@ -78,20 +89,16 @@ def train():
         avg_loss = total_loss / max(1, len(dataloader))
         print(f"==> Epoch {epoch+1}/{epochs} tamamlandı | Ortalama Loss: {avg_loss:.4f}")
 
-        # Checkpoint kaydı
         checkpoint_path = os.path.join(checkpoint_dir, f"epoch_{epoch+1}.pt")
         torch.save(model.state_dict(), checkpoint_path)
         print(f"[✓] Checkpoint kaydedildi: {checkpoint_path}")
 
-    # Final modeli kaydet
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     torch.save(model.state_dict(), model_path)
     print(f"[✓] Final model kaydedildi: {model_path}")
 
-    # Eğitim sonrası github push (manuel çalıştırılmalı komut satırından)
-    os.system("git add .")
-    os.system("git commit -m 'Auto training update'")
-    os.system("git push origin main")
+    # 🚀 Otomatik GitHub push
+    run_github_push()
 
 if __name__ == "__main__":
     train()
