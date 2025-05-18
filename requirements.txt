@@ -1,0 +1,4 @@
+torch>=1.10.0
+sentencepiece>=0.1.99
+tqdm
+numpy
